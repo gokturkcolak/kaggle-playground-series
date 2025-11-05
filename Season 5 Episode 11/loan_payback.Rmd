@@ -1,0 +1,36 @@
+---
+title: "Loan Payback Prediction"
+author: "Göktürk Çolak"
+date: "2025-11-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# libraries
+library(tidyverse)
+
+# setting up the directory
+setwd("../Desktop/Github/kaggle-playground-series/Season 5 Episode 11")
+
+# uploading the files
+train <- read_csv("data/train.csv")
+test <- read_csv("data/test.csv")
+sample_submission <- read_csv("data/sample_submission.csv")
+```
+
+
+
+```{r}
+train %>% 
+  count(loan_paid_back)
+
+head(train, 20)
+
+
+
+```
+
