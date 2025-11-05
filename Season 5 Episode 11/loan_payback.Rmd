@@ -216,4 +216,85 @@ plot4 <- ggplot(train, aes(x = emp_payback_rate, color = loan_paid_back)) +
   plot_annotation(title = "Feature Engineering Validation")
 ```
 
+```{r}
+# Load libraries
+library(dplyr)
+library(caret)
+
+# Fix target variable and create engineered features
+train_clean <- train %>%
+  mutate(
+    loan_paid_back = factor(loan_paid_back,
+                           levels = c(0, 1),
+                           labels = c("Not_Paid", "Paid")),
+    credit_risk_tier = factor(case_when(
+      credit_score < 600 ~ "High_Risk",
+      credit_score >= 600 & credit_score < 700 ~ "Medium_Risk", 
+      credit_score >= 700 ~ "Low_Risk"
+    )),
+    employment_stability = factor(case_when(
+      employment_status %in% c("Employed", "Retired") ~ "Stable",
+      employment_status %in% c("Self-employed", "Student") ~ "Moderate", 
+      employment_status == "Unemployed" ~ "Unstable"
+    )),
+    high_risk_combination = as.factor(ifelse(
+      employment_status == "Unemployed" & credit_score < 620, 1, 0
+    ))
+  ) %>%
+  na.omit()
+
+# Set up and run 5-fold cross-validation
+set.seed(123)
+ctrl <- trainControl(
+  method = "cv",
+  number = 5,
+  summaryFunction = twoClassSummary,
+  classProbs = TRUE,
+  verboseIter = FALSE
+)
+
+cv_model <- train(
+  loan_paid_back ~ credit_score + annual_income + 
+    debt_to_income_ratio + loan_amount + interest_rate +
+    credit_risk_tier + employment_stability + high_risk_combination,
+  data = train_clean,
+  method = "glm",
+  family = "binomial",
+  trControl = ctrl,
+  metric = "ROC"
+)
+
+# Print CV results
+print(paste("Cross-validated AUC:", round(mean(cv_model$results$ROC), 4)))
+
+# Prepare test set and make final predictions
+test_clean <- test %>%
+  mutate(
+    credit_risk_tier = factor(case_when(
+      credit_score < 600 ~ "High_Risk",
+      credit_score >= 600 & credit_score < 700 ~ "Medium_Risk", 
+      credit_score >= 700 ~ "Low_Risk"
+    )),
+    employment_stability = factor(case_when(
+      employment_status %in% c("Employed", "Retired") ~ "Stable",
+      employment_status %in% c("Self-employed", "Student") ~ "Moderate", 
+      employment_status == "Unemployed" ~ "Unstable"
+    )),
+    high_risk_combination = as.factor(ifelse(
+      employment_status == "Unemployed" & credit_score < 620, 1, 0
+    ))
+  )
+
+final_predictions <- predict(cv_model, newdata = test_clean, type = "prob")$Paid
+
+# Create submission file
+submission <- data.frame(
+  id = test_clean$id,
+  loan_paid_back = final_predictions
+)
+
+write.csv(submission, "simple_cv_model_submission.csv", row.names = FALSE)
+```
+
+
 
