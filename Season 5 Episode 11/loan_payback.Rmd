@@ -22,15 +22,103 @@ test <- read_csv("data/test.csv")
 sample_submission <- read_csv("data/sample_submission.csv")
 ```
 
+# Preprocessing
 
+```{r}
+train <- train %>% 
+  mutate(loan_paid_back = as.factor(loan_paid_back)) 
+
+levels(train$loan_paid_back)
+```
+
+# Exploratory Data Analysis
 
 ```{r}
 train %>% 
-  count(loan_paid_back)
+  ggplot( aes(x = credit_score, fill = loan_paid_back)) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Credit Score Distribution by Payback Status")
 
-head(train, 20)
+
+train %>% 
+  ggplot(aes(x = employment_status, fill = loan_paid_back)) +
+  geom_bar(position = "fill") +
+  labs(title = "Payback Rate by Employment Status", y = "Proportion") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+train %>% 
+  ggplot(aes(x = credit_score, fill = loan_paid_back)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~employment_status) +
+  labs(title = "Credit Score Distribution by Employment Status and Payback")
+
+
+ggplot(train, aes(x = debt_to_income_ratio, fill = loan_paid_back)) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Debt-to-Income Ratio by Payback Status")
+
+
+
+ggplot(train, aes(x = interest_rate, fill = loan_paid_back)) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Interest Rate by Payback Status")
+
+
+
+train %>% 
+  ggplot(aes(x = education_level, fill = loan_paid_back)) +
+  geom_bar(position = "fill") +
+  labs(title = "Payback Rate by Education Level", y = "Proportion") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+train %>% 
+  ggplot(aes(x = loan_purpose, fill = loan_paid_back)) +
+  geom_bar(position = "fill") +
+  labs(title = "Payback Rate by Loan Purpose", y = "Proportion") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+train %>% 
+  ggplot(aes(x = gender, fill = loan_paid_back)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Payback Status by Gender")
+
+
+train %>% 
+  ggplot(aes(x = grade_subgrade, fill = loan_paid_back)) +
+  geom_bar(position = "fill") +
+  labs(title = "Payback Rate by Loan Grade/Subgrade", y = "Proportion") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+library(corrplot)
+
+numerical_vars <- train %>% 
+  select(annual_income, debt_to_income_ratio, credit_score, loan_amount, interest_rate, loan_paid_back) %>%
+  mutate(loan_paid_back = as.numeric(as.character(loan_paid_back)))
+
+cor_matrix <- cor(numerical_vars, use = "complete.obs")
+corrplot(cor_matrix, method = "color", type = "upper")
+
 
 
 
 ```
+--------------------------------------------------------------------------------
+Hypotheses tested: 
+1 - loan amount X interest rate = no
+2 - interest X paid back = no
+3 - gender X paid back = no
+--------------------------------------------------------------------------------
+
+# Feature Engineering
+
+```{r}
+train %>% 
+  mutate()
+```
+
 
