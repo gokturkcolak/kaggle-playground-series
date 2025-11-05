@@ -20,11 +20,7 @@ setwd("../Desktop/Github/kaggle-playground-series/Season 5 Episode 11")
 train <- read_csv("data/train.csv")
 test <- read_csv("data/test.csv")
 sample_submission <- read_csv("data/sample_submission.csv")
-```
 
-# Preprocessing
-
-```{r}
 train <- train %>% 
   mutate(loan_paid_back = as.factor(loan_paid_back)) 
 
@@ -117,8 +113,107 @@ Hypotheses tested:
 # Feature Engineering
 
 ```{r}
-train %>% 
-  mutate()
+# 1. Credit Score Binning (CRITICAL)
+train <- train %>%
+  mutate(
+    credit_risk_tier = case_when(
+      credit_score < 600 ~ "High_Risk",
+      credit_score >= 600 & credit_score < 700 ~ "Medium_Risk", 
+      credit_score >= 700 ~ "Low_Risk"
+    )
+  )
+
+# 2. Employment Stability (CRITICAL)
+train <- train %>%
+  mutate(
+    employment_stability = case_when(
+      employment_status %in% c("Employed", "Retired") ~ "Stable",
+      employment_status %in% c("Self-employed", "Student") ~ "Moderate", 
+      employment_status == "Unemployed" ~ "Unstable"
+    )
+  )
+
+# 3. High-Risk Combination (POWERFUL INTERACTION)
+train <- train %>%
+  mutate(
+    high_risk_combination = ifelse(
+      employment_status == "Unemployed" & credit_score < 620, 1, 0
+    )
+  )
+
+# Target encoding for employment (if you have enough data)
+employment_payback_rate <- train %>%
+  group_by(employment_status) %>%
+  summarise(emp_payback_rate = mean(as.numeric(as.character(loan_paid_back))))
+
+train <- train %>% left_join(employment_payback_rate, by = "employment_status")
+```
+
+```{r}
+# Check separation between risk tiers
+ggplot(train, aes(x = credit_risk_tier, fill = loan_paid_back)) +
+  geom_bar(position = "fill") +
+  labs(title = "Payback Rate by Credit Risk Tier", 
+       y = "Proportion", x = "Credit Risk Tier") +
+  scale_fill_manual(values = c("red", "green"))
+
+
+
+# Compare original vs engineered feature
+p1 <- ggplot(train, aes(x = employment_status, fill = loan_paid_back)) +
+  geom_bar(position = "fill") +
+  labs(title = "Original Employment Status", y = "Proportion") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p2 <- ggplot(train, aes(x = employment_stability, fill = loan_paid_back)) +
+  geom_bar(position = "fill") +
+  labs(title = "Engineered Employment Stability", y = "Proportion")
+
+library(patchwork)
+p1 + p2  # Side-by-side comparison
+
+
+# Show the power of this flag
+ggplot(train, aes(x = factor(high_risk_combination), fill = loan_paid_back)) +
+  geom_bar(position = "fill") +
+  labs(title = "Payback Rate by High-Risk Combination Flag",
+       x = "High Risk Combination (Unemployed + Poor Credit)",
+       y = "Proportion") +
+  scale_x_discrete(labels = c("No", "Yes"))
+
+
+# Show continuous relationship
+ggplot(train, aes(x = emp_payback_rate, fill = loan_paid_back)) +
+  geom_density(alpha = 0.7) +
+  labs(title = "Distribution of Employment Payback Rate by Actual Outcome",
+       x = "Employment Group Payback Rate",
+       y = "Density") +
+  geom_vline(xintercept = 0.5, linetype = "dashed", color = "red")
+
+```
+
+```{r}
+# Create a validation grid
+library(patchwork)
+
+plot1 <- ggplot(train, aes(x = credit_risk_tier, fill = loan_paid_back)) +
+  geom_bar(position = "fill") + 
+  theme(axis.text.x = element_text(angle = 45))
+
+plot2 <- ggplot(train, aes(x = employment_stability, fill = loan_paid_back)) +
+  geom_bar(position = "fill") + 
+  theme(axis.text.x = element_text(angle = 45))
+
+plot3 <- ggplot(train, aes(x = factor(high_risk_combination), fill = loan_paid_back)) +
+  geom_bar(position = "fill") +
+  labs(x = "High Risk Flag")
+
+plot4 <- ggplot(train, aes(x = emp_payback_rate, color = loan_paid_back)) +
+  geom_density() + 
+  labs(x = "Emp Payback Rate")
+
+(plot1 + plot2) / (plot3 + plot4) +
+  plot_annotation(title = "Feature Engineering Validation")
 ```
 
 
