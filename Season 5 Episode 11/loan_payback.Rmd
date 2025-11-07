@@ -51,15 +51,27 @@ train %>%
 
 
 
-# Note: Omit outliers since IQR is low (0.084)
-#summary(train$debt_to_income_ratio) -> -> -> 3rd Quartile
+# Note: Omit outliers since IQR is low (0.084) - DONE
+# summary(train$debt_to_income_ratio)
+Q1 <- quantile(train$debt_to_income_ratio, 0.25)
+Q3 <- quantile(train$debt_to_income_ratio, 0.75)
+IQR_value <- IQR(train$debt_to_income_ratio)
 
-ggplot(train, aes(x = debt_to_income_ratio, fill = loan_paid_back)) +
+lower_bound <- Q1 - 1.5 * IQR_value
+upper_bound <- Q3 + 1.5 * IQR_value
+
+# Filter out outliers
+train_clean <- train %>%
+  filter(debt_to_income_ratio >= lower_bound & debt_to_income_ratio <= upper_bound)
+
+
+train_clean %>% 
+  ggplot(aes(x = debt_to_income_ratio, fill = loan_paid_back)) +
   geom_density(alpha = 0.3) +
-  labs(title = "Debt-to-Income Ratio by Payback Status")
+  labs(title = "Debt-to-Income Ratio by Payback Status (Outliers Removed)")
 
 
-# ? Not sure
+# ? Not sure, model may catch some signals
 train %>% 
   ggplot(aes(x = loan_purpose, fill = loan_paid_back)) +
   geom_bar(position = "fill") +
@@ -129,6 +141,18 @@ employment_payback_rate <- train %>%
   summarise(emp_payback_rate = mean(as.numeric(as.character(loan_paid_back))))
 
 train <- train %>% left_join(employment_payback_rate, by = "employment_status")
+
+
+# 4. Subgrade Classification
+train <- train %>%
+  mutate(grade_subgrade = factor(grade_subgrade, levels = c(paste0("A", 1:5), paste0("B", 1:5),
+                                                            paste0("C", 1:5), paste0("D", 1:5),
+                                                            paste0("E", 1:5), paste0("F", 1:5)),
+                                 ordered = TRUE),
+         loan_risk_tier = case_when(grade_subgrade %in% c(paste0("A", 1:5), paste0("B", 1:5)) ~ "Safe",
+                                    grade_subgrade %in% paste0("C", 1:5) ~ "Moderate",
+                                    TRUE ~ "Dangerous")
+         )
 ```
 
 ```{r}
@@ -204,7 +228,7 @@ library(dplyr)
 library(caret)
 
 # Fix target variable and create engineered features
-train_clean <- train %>%
+train_model <- train %>%
   mutate(
     loan_paid_back = factor(loan_paid_back,
                            levels = c(0, 1),
@@ -239,7 +263,7 @@ cv_model <- train(
   loan_paid_back ~ credit_score + annual_income + 
     debt_to_income_ratio + loan_amount + interest_rate +
     credit_risk_tier + employment_stability + high_risk_combination,
-  data = train_clean,
+  data = train_model,
   method = "glm",
   family = "binomial",
   trControl = ctrl,
