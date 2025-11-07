@@ -222,33 +222,48 @@ plot4 <- ggplot(train, aes(x = emp_payback_rate, color = loan_paid_back)) +
   plot_annotation(title = "Feature Engineering Validation")
 ```
 
+# Final Feature Engineering & Modelling & Submission File
+
 ```{r}
 # Load libraries
-library(dplyr)
 library(caret)
 
-# Fix target variable and create engineered features
+# Apply the SAME feature engineering from above to create modeling dataset
+# to keep train and train_clean for EDA
 train_model <- train %>%
   mutate(
+    # Fix target variable naming
     loan_paid_back = factor(loan_paid_back,
                            levels = c(0, 1),
                            labels = c("Not_Paid", "Paid")),
+    
+    # Use the EXACT SAME feature engineering from your Feature Engineering chunk
     credit_risk_tier = factor(case_when(
-      credit_score < 600 ~ "High_Risk",
-      credit_score >= 600 & credit_score < 700 ~ "Medium_Risk", 
+      credit_score <= 650 ~ "High_Risk",
+      credit_score > 650 & credit_score < 700 ~ "Medium_Risk", 
       credit_score >= 700 ~ "Low_Risk"
     )),
+    
     employment_stability = factor(case_when(
-      employment_status %in% c("Employed", "Retired") ~ "Stable",
-      employment_status %in% c("Self-employed", "Student") ~ "Moderate", 
+      employment_status %in% c("Employed", "Retired", "Self-employed") ~ "Stable",
+      employment_status == "Student" ~ "Moderate", 
       employment_status == "Unemployed" ~ "Unstable"
     )),
+    
     high_risk_combination = as.factor(ifelse(
-      employment_status == "Unemployed" & credit_score < 620, 1, 0
+      employment_status %in% c("Retired", "Student") & credit_score <= 650, 1, 0
+    )),
+    
+    # Include the loan_risk_tier you created
+    loan_risk_tier = factor(case_when(
+      grade_subgrade %in% c(paste0("A", 1:5), paste0("B", 1:5)) ~ "Safe",
+      grade_subgrade %in% paste0("C", 1:5) ~ "Moderate",
+      TRUE ~ "Dangerous"
     ))
   ) %>%
   na.omit()
 
+# Remove emp_payback_rate from the model for now (it's causing issues)
 # Set up and run 5-fold cross-validation
 set.seed(123)
 ctrl <- trainControl(
@@ -259,12 +274,14 @@ ctrl <- trainControl(
   verboseIter = FALSE
 )
 
+# Model with your engineered features (without emp_payback_rate)
 cv_model <- train(
   loan_paid_back ~ credit_score + annual_income + 
     debt_to_income_ratio + loan_amount + interest_rate +
-    credit_risk_tier + employment_stability + high_risk_combination,
+    credit_risk_tier + employment_stability + high_risk_combination +
+    loan_risk_tier,
   data = train_model,
-  method = "glm",
+  method = "glm", 
   family = "binomial",
   trControl = ctrl,
   metric = "ROC"
@@ -273,24 +290,30 @@ cv_model <- train(
 # Print CV results
 print(paste("Cross-validated AUC:", round(mean(cv_model$results$ROC), 4)))
 
-# Prepare test set and make final predictions
+# Apply same feature engineering to test set
 test_clean <- test %>%
   mutate(
     credit_risk_tier = factor(case_when(
-      credit_score < 600 ~ "High_Risk",
-      credit_score >= 600 & credit_score < 700 ~ "Medium_Risk", 
+      credit_score <= 650 ~ "High_Risk",
+      credit_score > 650 & credit_score < 700 ~ "Medium_Risk", 
       credit_score >= 700 ~ "Low_Risk"
     )),
     employment_stability = factor(case_when(
-      employment_status %in% c("Employed", "Retired") ~ "Stable",
-      employment_status %in% c("Self-employed", "Student") ~ "Moderate", 
+      employment_status %in% c("Employed", "Retired", "Self-employed") ~ "Stable",
+      employment_status == "Student" ~ "Moderate", 
       employment_status == "Unemployed" ~ "Unstable"
     )),
     high_risk_combination = as.factor(ifelse(
-      employment_status == "Unemployed" & credit_score < 620, 1, 0
+      employment_status %in% c("Retired", "Student") & credit_score <= 650, 1, 0
+    )),
+    loan_risk_tier = factor(case_when(
+      grade_subgrade %in% c(paste0("A", 1:5), paste0("B", 1:5)) ~ "Safe",
+      grade_subgrade %in% paste0("C", 1:5) ~ "Moderate",
+      TRUE ~ "Dangerous"
     ))
   )
 
+# Final predictions
 final_predictions <- predict(cv_model, newdata = test_clean, type = "prob")$Paid
 
 # Create submission file
