@@ -55,16 +55,16 @@ train %>%
 
 # Note: Omit outliers since IQR is low (0.084) - DONE
 # summary(train$debt_to_income_ratio)
-Q1_debt_to_income_ratio <- quantile(train$debt_to_income_ratio, 0.25)
-Q3_debt_to_income_ratio <- quantile(train$debt_to_income_ratio, 0.75)
-IQR_debt_to_income_ratio <- IQR(train$debt_to_income_ratio)
+Q1_dti <- quantile(train$debt_to_income_ratio, 0.25)
+Q3_dti <- quantile(train$debt_to_income_ratio, 0.75)
+IQR_dti <- IQR(train$debt_to_income_ratio)
 
-lower_bound_debt_to_income_ratio <- Q1_debt_to_income_ratio - 1.5 * IQR_debt_to_income_ratio
-upper_bound_debt_to_income_ratio <- Q3_debt_to_income_ratio + 1.5 * IQR_debt_to_income_ratio
+lower_bound_dti <- Q1_dti - 1.5 * IQR_dti
+upper_bound_dti <- Q3_dti + 1.5 * IQR_dti
 
 # Filter out outliers
 train_clean <- train %>%
-  filter(debt_to_income_ratio >= lower_bound_debt_to_income_ratio & debt_to_income_ratio <= upper_bound_debt_to_income_ratio)
+  filter(debt_to_income_ratio >= lower_bound_dti & debt_to_income_ratio <= upper_bound_dti)
 
 
 train_clean %>% 
@@ -104,7 +104,7 @@ corrplot(cor_matrix, method = "color", type = "upper")
 
 # corrplot ends ----------------------------------------------------------------
 
-#
+# Interest Rate
 Q1_interest <- quantile(train$interest_rate, 0.25)
 Q3_interest <- quantile(train$interest_rate, 0.75)
 IQR_interest <- IQR(train$interest_rate)
@@ -112,16 +112,12 @@ IQR_interest <- IQR(train$interest_rate)
 lower_bound_interest <- Q1_interest - 1.5 * IQR_interest
 upper_bound_interest <- Q3_interest + 1.5 * IQR_interest
 
-# Filter out outliers
 train_clean <- train %>%
   filter(interest_rate >= lower_bound_interest & interest_rate <= upper_bound_interest)
 
 train_clean %>% 
   ggplot(aes(interest_rate, fill = loan_paid_back)) +
   geom_density(alpha = .3)
-  
-
-
 ```
 
 --------------------------------------------------------------------------------
@@ -171,8 +167,11 @@ train <- train %>%
                                  ordered = TRUE),
          loan_risk_tier = case_when(grade_subgrade %in% c(paste0("A", 1:5), paste0("B", 1:5)) ~ "Safe",
                                     grade_subgrade %in% paste0("C", 1:5) ~ "Moderate",
-                                    TRUE ~ "Dangerous")
-         )
+                                    TRUE ~ "Dangerous"))
+
+train <- train %>%
+  mutate(interest_rate_risk = case_when(interest_rate < 12.5 ~ "Low_Risk",
+                                        interest_rate >= 12.5 ~ "High_Risk"))
 ```
 
 # Feature Plots
@@ -250,10 +249,11 @@ plot4 <- ggplot(train, aes(x = emp_payback_rate, color = loan_paid_back)) +
 
 ```{r}
 # Load libraries
+library(dplyr)
 library(caret)
+library(xgboost)
 
 # Apply the SAME feature engineering from above to create modeling dataset
-# to keep train and train_clean for EDA
 train_model <- train %>%
   mutate(
     # Fix target variable naming
@@ -283,27 +283,32 @@ train_model <- train %>%
       grade_subgrade %in% c(paste0("A", 1:5), paste0("B", 1:5)) ~ "Safe",
       grade_subgrade %in% paste0("C", 1:5) ~ "Moderate",
       TRUE ~ "Dangerous"
-    ))
+    )),
+    
+    # Add interest_rate_risk
+    interest_rate_risk = case_when(
+      interest_rate < 12.5 ~ "Low_Risk",
+      interest_rate >= 12.5 ~ "High_Risk"
+    )
   ) %>%
   na.omit()
 
-# Remove emp_payback_rate from the model for now (it's causing issues)
-# Set up and run 5-fold cross-validation
+# Set up and run 5-fold cross-validation for Logistic Regression
 set.seed(123)
 ctrl <- trainControl(
   method = "cv",
   number = 5,
   summaryFunction = twoClassSummary,
   classProbs = TRUE,
-  verboseIter = FALSE
+  verboseIter = TRUE
 )
 
-# Model with your engineered features (without emp_payback_rate)
+# 1. Logistic Regression Model
 cv_model <- train(
   loan_paid_back ~ credit_score + annual_income + 
     debt_to_income_ratio + loan_amount + interest_rate +
     credit_risk_tier + employment_stability + high_risk_combination +
-    loan_risk_tier,
+    loan_risk_tier + interest_rate_risk,
   data = train_model,
   method = "glm", 
   family = "binomial",
@@ -311,10 +316,54 @@ cv_model <- train(
   metric = "ROC"
 )
 
-# Print CV results
-print(paste("Cross-validated AUC:", round(mean(cv_model$results$ROC), 4)))
+print(paste("Logistic Regression AUC:", round(mean(cv_model$results$ROC), 4)))
 
-# Apply same feature engineering to test set
+# 2. Proper XGBoost with early stopping and metric tracking
+# Prepare data for XGBoost (convert to matrix)
+train_features <- train_model %>%
+  select(credit_score, annual_income, debt_to_income_ratio, loan_amount, 
+         interest_rate, credit_risk_tier, employment_stability, 
+         high_risk_combination, loan_risk_tier, interest_rate_risk) %>%
+  model.matrix(~ . - 1, data = .)  # Convert factors to dummy variables
+
+train_label <- as.numeric(train_model$loan_paid_back == "Paid")  # Convert to 0/1
+
+# Create XGBoost specific data structure
+dtrain <- xgb.DMatrix(data = train_features, label = train_label)
+
+# Set parameters with early stopping
+params <- list(
+  objective = "binary:logistic",
+  eval_metric = "auc",
+  eta = 0.1,
+  max_depth = 6,
+  min_child_weight = 1,
+  subsample = 0.8,
+  colsample_bytree = 0.8
+)
+
+# Train with early stopping and watch progress
+xgb_cv <- xgb.cv(
+  params = params,
+  data = dtrain,
+  nrounds = 1000,
+  nfold = 5,
+  early_stopping_rounds = 50,
+  verbose = TRUE,
+  print_every_n = 100
+)
+
+# Train final model on full training data
+final_xgb <- xgb.train(
+  params = params,
+  data = dtrain,
+  nrounds = xgb_cv$best_iteration,
+  verbose = 1
+)
+
+print(paste("Best XGBoost CV AUC:", 1 - xgb_cv$evaluation_log$test_auc_mean[xgb_cv$best_iteration]))
+
+# Prepare test set with same feature engineering
 test_clean <- test %>%
   mutate(
     credit_risk_tier = factor(case_when(
@@ -334,19 +383,50 @@ test_clean <- test %>%
       grade_subgrade %in% c(paste0("A", 1:5), paste0("B", 1:5)) ~ "Safe",
       grade_subgrade %in% paste0("C", 1:5) ~ "Moderate",
       TRUE ~ "Dangerous"
-    ))
+    )),
+    interest_rate_risk = case_when(
+      interest_rate < 12.5 ~ "Low_Risk",
+      interest_rate >= 12.5 ~ "High_Risk"
+    )
   )
 
-# Final predictions
-final_predictions <- predict(cv_model, newdata = test_clean, type = "prob")$Paid
+# Prepare test features for XGBoost
+test_features <- test_clean %>%
+  select(credit_score, annual_income, debt_to_income_ratio, loan_amount, 
+         interest_rate, credit_risk_tier, employment_stability, 
+         high_risk_combination, loan_risk_tier, interest_rate_risk) %>%
+  model.matrix(~ . - 1, data = .)
 
-# Create submission file
-submission <- data.frame(
+dtest <- xgb.DMatrix(data = test_features)
+
+# Generate predictions from both models
+logistic_predictions <- predict(cv_model, newdata = test_clean, type = "prob")$Paid
+xgb_predictions <- predict(final_xgb, newdata = dtest)
+
+# Create submission files
+# 1. Logistic Regression
+logistic_submission <- data.frame(
   id = test_clean$id,
-  loan_paid_back = final_predictions
+  loan_paid_back = logistic_predictions
 )
+write.csv(logistic_submission, "logistic_submission.csv", row.names = FALSE)
 
-write.csv(submission, "simple_cv_model_submission.csv", row.names = FALSE)
+# 2. XGBoost
+xgb_submission <- data.frame(
+  id = test_clean$id,
+  loan_paid_back = xgb_predictions
+)
+write.csv(xgb_submission, "xgb_submission.csv", row.names = FALSE)
+
+# 3. Ensemble (Average)
+ensemble_predictions <- (logistic_predictions + xgb_predictions) / 2
+ensemble_submission <- data.frame(
+  id = test_clean$id,
+  loan_paid_back = ensemble_predictions
+)
+write.csv(ensemble_submission, "ensemble_submission.csv", row.names = FALSE)
+
+print("All submission files created: logistic_submission.csv, xgb_submission.csv, ensemble_submission.csv")
 ```
 
 
