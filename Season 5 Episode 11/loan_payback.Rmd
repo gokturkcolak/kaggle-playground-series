@@ -9,6 +9,8 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+# Data Upload and Preprocessing
+
 ```{r}
 # libraries
 library(tidyverse)
@@ -107,12 +109,15 @@ corrplot(cor_matrix, method = "color", type = "upper")
 
 
 ```
+
 --------------------------------------------------------------------------------
+
 EDAs tested: 
 1 - loan amount X interest rate = no
 2 - interest X target = no
 3 - gender X target = no
 4 - education X target = no
+
 --------------------------------------------------------------------------------
 
 # Feature Engineering
@@ -154,6 +159,8 @@ train <- train %>%
                                     TRUE ~ "Dangerous")
          )
 ```
+
+# Feature Plots
 
 ```{r}
 # Check separation between risk tiers
@@ -197,6 +204,8 @@ ggplot(train, aes(x = emp_payback_rate, fill = loan_paid_back)) +
   geom_vline(xintercept = 0.5, linetype = "dashed", color = "red")
 
 ```
+
+# Combined Plots
 
 ```{r}
 # Create a validation grid
