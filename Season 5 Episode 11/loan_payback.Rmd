@@ -1,5 +1,5 @@
 ---
-title: "Loan Payback Prediction"
+title: "Season 5 Episode 11 | Predicting Loan Payback"
 author: "Göktürk Çolak"
 date: "2025-11-02"
 output: html_document
@@ -55,16 +55,16 @@ train %>%
 
 # Note: Omit outliers since IQR is low (0.084) - DONE
 # summary(train$debt_to_income_ratio)
-Q1 <- quantile(train$debt_to_income_ratio, 0.25)
-Q3 <- quantile(train$debt_to_income_ratio, 0.75)
-IQR_value <- IQR(train$debt_to_income_ratio)
+Q1_debt_to_income_ratio <- quantile(train$debt_to_income_ratio, 0.25)
+Q3_debt_to_income_ratio <- quantile(train$debt_to_income_ratio, 0.75)
+IQR_debt_to_income_ratio <- IQR(train$debt_to_income_ratio)
 
-lower_bound <- Q1 - 1.5 * IQR_value
-upper_bound <- Q3 + 1.5 * IQR_value
+lower_bound_debt_to_income_ratio <- Q1_debt_to_income_ratio - 1.5 * IQR_debt_to_income_ratio
+upper_bound_debt_to_income_ratio <- Q3_debt_to_income_ratio + 1.5 * IQR_debt_to_income_ratio
 
 # Filter out outliers
 train_clean <- train %>%
-  filter(debt_to_income_ratio >= lower_bound & debt_to_income_ratio <= upper_bound)
+  filter(debt_to_income_ratio >= lower_bound_debt_to_income_ratio & debt_to_income_ratio <= upper_bound_debt_to_income_ratio)
 
 
 train_clean %>% 
@@ -104,7 +104,21 @@ corrplot(cor_matrix, method = "color", type = "upper")
 
 # corrplot ends ----------------------------------------------------------------
 
+#
+Q1_interest <- quantile(train$interest_rate, 0.25)
+Q3_interest <- quantile(train$interest_rate, 0.75)
+IQR_interest <- IQR(train$interest_rate)
 
+lower_bound_interest <- Q1_interest - 1.5 * IQR_interest
+upper_bound_interest <- Q3_interest + 1.5 * IQR_interest
+
+# Filter out outliers
+train_clean <- train %>%
+  filter(interest_rate >= lower_bound_interest & interest_rate <= upper_bound_interest)
+
+train_clean %>% 
+  ggplot(aes(interest_rate, fill = loan_paid_back)) +
+  geom_density(alpha = .3)
   
 
 
@@ -117,6 +131,7 @@ EDAs tested:
 2 - interest X target = no
 3 - gender X target = no
 4 - education X target = no
+5 - annual income X target = no
 
 --------------------------------------------------------------------------------
 
