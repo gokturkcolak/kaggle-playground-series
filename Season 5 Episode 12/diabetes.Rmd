@@ -87,9 +87,9 @@ train %>%
   geom_histogram(aes(y = after_stat(density)), color = "white", fill = "#8387C3") +
   geom_density(color = "#0A1123", linewidth = 1, adjust = 2)
 
-# Age - Diabetes
+# Impact of Age on Diabetes
 train %>%
-  ggplot(aes(x = age, fill = factor(diagnosed_diabetes))) +
+  ggplot(aes(x = age, fill = diagnosed_diabetes)) +
   geom_density(alpha = 0.5) +
   labs(fill = "Diabetes")
 
@@ -102,8 +102,6 @@ train %>%
   labs(y = "Proportion", x = "Alcohol Consumption Level")
 
 # 
-
-
 
 
 
