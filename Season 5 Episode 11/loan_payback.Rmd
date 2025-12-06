@@ -118,438 +118,465 @@ train_clean <- train %>%
 train_clean %>% 
   ggplot(aes(interest_rate, fill = loan_paid_back)) +
   geom_density(alpha = .3)
-
-
-### ADDITIONS --- NEW
-
-# Check class distribution
-class_dist <- prop.table(table(train$loan_paid_back))
-print(paste("Class 0:", round(class_dist[1], 3)))
-print(paste("Class 1:", round(class_dist[2], 3)))
-
-# Since imbalance is 0.201 to 0.799, set scale_pos_weight properly
-# For XGBoost: scale_pos_weight = number of negative class / number of positive class
-if (class_dist[1] > 0.7 | class_dist[2] > 0.7) {
-  scale_ratio <- sum(train$loan_paid_back == 0) / sum(train$loan_paid_back == 1)
-  print(paste("Setting scale_pos_weight to:", round(scale_ratio, 3)))
-  # This will be approximately 0.251 (since 20.1%/79.9% ≈ 0.251)
-}
-
-
-
-# Test Debt + Credit Score Interaction
-train %>%
-  mutate(
-    debt_credit_risk = case_when(
-      debt_to_income_ratio > 0.4 & credit_score < 650 ~ "High_Debt_Poor_Credit",
-      debt_to_income_ratio > 0.4 & credit_score >= 650 ~ "High_Debt_Good_Credit",
-      debt_to_income_ratio <= 0.4 & credit_score < 650 ~ "Low_Debt_Poor_Credit",
-      TRUE ~ "Low_Debt_Good_Credit"
-    )
-  ) %>%
-  ggplot(aes(x = debt_credit_risk, fill = loan_paid_back)) +
-  geom_bar(position = "fill") +
-  labs(title = "Debt & Credit Score Combinations") +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
-# -> Hypothesis: Higher payment/income ratio = riskier
-
-# Actual Loan Purpose Payback Rates - sorted from lowest to highest
-train %>%
-  group_by(loan_purpose) %>%
-  summarise(payback_rate = mean(as.numeric(as.character(loan_paid_back)))) %>%
-  mutate(loan_purpose = fct_reorder(loan_purpose, payback_rate)) %>%
-  ggplot(aes(x = loan_purpose, y = payback_rate)) +
-  geom_col(fill = "steelblue") +
-  labs(title = "Actual Loan Purpose Payback Rates (Lowest to Highest)", 
-       x = "Loan Purpose", y = "Payback Rate") +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  scale_y_continuous(labels = scales::percent_format()) +
-  geom_text(aes(label = paste0(round(payback_rate * 100, 1), "%")), 
-            vjust = -0.5, size = 3)
-
-# Test Loan Purpose Risk Tiers with actual categories
-train %>%
-  mutate(
-    purpose_risk = case_when(
-      loan_purpose %in% c("Education", "Medical", "Vacation") ~ "Low_Risk",
-      loan_purpose %in% c("Debt consolidation", "Car", "Other") ~ "Medium_Risk", 
-      loan_purpose %in% c("Business", "Home") ~ "High_Risk")
-  ) %>%
-  ggplot(aes(x = purpose_risk, fill = loan_paid_back)) +
-  geom_bar(position = "fill") +
-  labs(title = "Loan Purpose Risk Tiers vs Payback Rate") +
-  theme_minimal()
-
-# -> Hypothesis: Some purposes are inherently riskier
-
-# 4. Debt + Credit Score Interaction
-train %>%
-  mutate(
-    debt_credit_risk = ifelse(debt_to_income_ratio > 0.4 & credit_score < 650, "High_Risk", "Normal")
-  ) %>%
-  ggplot(aes(x = debt_credit_risk, fill = loan_paid_back)) +
-  geom_bar(position = "fill") +
-  labs(title = "High Debt + Poor Credit Combination")
-
-# Hypothesis: This combination is particularly dangerous
-
-# 5. Credit Utilization Concept
-train %>%
-  mutate(
-    credit_utilization = debt_to_income_ratio / credit_score * 1000
-  ) %>%
-  filter(credit_utilization < 5) %>% # Remove outliers
-  ggplot(aes(x = credit_utilization, fill = loan_paid_back)) +
-  geom_density(alpha = 0.5) +
-  labs(title = "Credit Utilization Metric vs Payback")
-
-# Hypothesis: Higher utilization = higher risk
-
-
-
 ```
+
+--------------------------------------------------------------------------------
+
+EDAs tested: 
+1 - loan amount X interest rate = no
+2 - interest X target = no
+3 - gender X target = no
+4 - education X target = no
+5 - annual income X target = no
+
+--------------------------------------------------------------------------------
 
 # Feature Engineering
 
 ```{r}
+# 1. Credit Score Binning - Done
+train <- train %>%
+  mutate(credit_risk_tier = case_when(credit_score <= 650 ~ "High_Risk",
+                                      credit_score > 650 & credit_score < 700 ~ "Medium_Risk", 
+                                      credit_score >= 700 ~ "Low_Risk")
+         )
+
+# 2. Employment Stability - ?
+train <- train %>%
+  mutate(employment_stability = case_when(employment_status %in% c("Employed", "Retired", "Self-employed") ~ "Stable",
+                                          employment_status == "Student" ~ "Moderate", 
+                                          employment_status == "Unemployed" ~ "Unstable"))
+
+# 3. High-Risk Combination - ?
+train <- train %>%
+  mutate(high_risk_combination = ifelse(employment_status %in% c("Retired", "Student") & credit_score <= 650, 1, 0))
+
+# Target encoding for employment (if you have enough data) - ? (get it explained by Gemini/Deepseek)
+employment_payback_rate <- train %>%
+  group_by(employment_status) %>%
+  summarise(emp_payback_rate = mean(as.numeric(as.character(loan_paid_back))))
+
+train <- train %>% left_join(employment_payback_rate, by = "employment_status")
+
+
+# 4. Subgrade Classification
+train <- train %>%
+  mutate(grade_subgrade = factor(grade_subgrade, levels = c(paste0("A", 1:5), paste0("B", 1:5),
+                                                            paste0("C", 1:5), paste0("D", 1:5),
+                                                            paste0("E", 1:5), paste0("F", 1:5)),
+                                 ordered = TRUE),
+         loan_risk_tier = case_when(grade_subgrade %in% c(paste0("A", 1:5), paste0("B", 1:5)) ~ "Safe",
+                                    grade_subgrade %in% paste0("C", 1:5) ~ "Moderate",
+                                    TRUE ~ "Dangerous"))
+
+train <- train %>%
+  mutate(interest_rate_risk = case_when(interest_rate < 12.5 ~ "Low_Risk",
+                                        interest_rate >= 12.5 ~ "High_Risk"))
+```
+
+# Feature Plots
+
+```{r}
+# Check separation between risk tiers
+ggplot(train, aes(x = credit_risk_tier, fill = loan_paid_back)) +
+  geom_bar(position = "fill") +
+  labs(title = "Payback Rate by Credit Risk Tier", 
+       y = "Proportion", x = "Credit Risk Tier") +
+  scale_fill_manual(values = c("red", "green"))
+
+
+
+# Compare original vs engineered feature
+p1 <- ggplot(train, aes(x = employment_status, fill = loan_paid_back)) +
+  geom_bar(position = "fill") +
+  labs(title = "Original Employment Status", y = "Proportion") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p2 <- ggplot(train, aes(x = employment_stability, fill = loan_paid_back)) +
+  geom_bar(position = "fill") +
+  labs(title = "Engineered Employment Stability", y = "Proportion")
+
+library(patchwork)
+p1 + p2  # Side-by-side comparison
+
+
+# Show the power of this flag
+ggplot(train, aes(x = factor(high_risk_combination), fill = loan_paid_back)) +
+  geom_bar(position = "fill") +
+  labs(title = "Payback Rate by High-Risk Combination Flag",
+       x = "High Risk Combination (Unemployed + Poor Credit)",
+       y = "Proportion") +
+  scale_x_discrete(labels = c("No", "Yes"))
+
+
+# Show continuous relationship
+ggplot(train, aes(x = emp_payback_rate, fill = loan_paid_back)) +
+  geom_density(alpha = 0.7) +
+  labs(title = "Distribution of Employment Payback Rate by Actual Outcome",
+       x = "Employment Group Payback Rate",
+       y = "Density") +
+  geom_vline(xintercept = 0.5, linetype = "dashed", color = "red")
+
+```
+
+# Combined Plots
+
+```{r}
+# Create a validation grid
+library(patchwork)
+
+plot1 <- ggplot(train, aes(x = credit_risk_tier, fill = loan_paid_back)) +
+  geom_bar(position = "fill") + 
+  theme(axis.text.x = element_text(angle = 45))
+
+plot2 <- ggplot(train, aes(x = employment_stability, fill = loan_paid_back)) +
+  geom_bar(position = "fill") + 
+  theme(axis.text.x = element_text(angle = 45))
+
+plot3 <- ggplot(train, aes(x = factor(high_risk_combination), fill = loan_paid_back)) +
+  geom_bar(position = "fill") +
+  labs(x = "High Risk Flag")
+
+plot4 <- ggplot(train, aes(x = emp_payback_rate, color = loan_paid_back)) +
+  geom_density() + 
+  labs(x = "Emp Payback Rate")
+
+(plot1 + plot2) / (plot3 + plot4) +
+  plot_annotation(title = "Feature Engineering Validation")
+```
+
+# Enhanced Feature Engineering - FIXED
+```{r}
 # Load libraries
-library(dplyr)
-library(caret)
-library(xgboost)
+library(tidyverse)
 library(catboost)
-library(pROC)
+library(lightgbm)
 
-# Apply the feature engineering to create modeling dataset
-train_model <- train %>%
-  mutate(
-    # Fix target variable naming
-    loan_paid_back = factor(loan_paid_back,
-                           levels = c(0, 1),
-                           labels = c("Not_Paid", "Paid")),
+# Enhanced feature engineering function - DEBUGGED
+enhanced_feature_engineering <- function(df, train_df = NULL) {
+  # Apply your original feature engineering
+  df_engineered <- df %>%
+    mutate(
+      credit_risk_tier = factor(case_when(
+        credit_score <= 650 ~ "High_Risk",
+        credit_score > 650 & credit_score < 700 ~ "Medium_Risk", 
+        credit_score >= 700 ~ "Low_Risk"
+      )),
+      
+      employment_stability = factor(case_when(
+        employment_status %in% c("Employed", "Retired", "Self-employed") ~ "Stable",
+        employment_status == "Student" ~ "Moderate", 
+        employment_status == "Unemployed" ~ "Unstable"
+      )),
+      
+      high_risk_combination = as.factor(ifelse(
+        employment_status %in% c("Retired", "Student") & credit_score <= 650, 1, 0
+      )),
+      
+      loan_risk_tier = factor(case_when(
+        grade_subgrade %in% c(paste0("A", 1:5), paste0("B", 1:5)) ~ "Safe",
+        grade_subgrade %in% paste0("C", 1:5) ~ "Moderate",
+        TRUE ~ "Dangerous"
+      )),
+      
+      interest_rate_risk = factor(case_when(
+        interest_rate < 12.5 ~ "Low_Risk",
+        interest_rate >= 12.5 ~ "High_Risk"
+      ))
+    )
+  
+  # Target encoding for categorical variables (only if training data is provided)
+  if (!is.null(train_df)) {
+    # Convert loan_paid_back to numeric for calculations
+    train_df <- train_df %>%
+      mutate(loan_paid_back_num = as.numeric(as.character(loan_paid_back)))
     
-    # Original features
-    credit_risk_tier = factor(case_when(
-      credit_score <= 650 ~ "High_Risk",
-      credit_score > 650 & credit_score < 700 ~ "Medium_Risk", 
-      credit_score >= 700 ~ "Low_Risk"
-    )),
+    global_mean <- mean(train_df$loan_paid_back_num, na.rm = TRUE)
     
-    employment_stability = factor(case_when(
-      employment_status %in% c("Employed", "Retired", "Self-employed") ~ "Stable",
-      employment_status == "Student" ~ "Moderate", 
-      employment_status == "Unemployed" ~ "Unstable"
-    )),
+    # Employment encoding
+    employment_encoding <- train_df %>%
+      group_by(employment_status) %>%
+      summarise(employment_encoded = mean(loan_paid_back_num, na.rm = TRUE))
     
-    high_risk_combination = as.factor(ifelse(
-      employment_status %in% c("Retired", "Student") & credit_score <= 650, 1, 0
-    )),
+    # Purpose encoding  
+    purpose_encoding <- train_df %>%
+      group_by(loan_purpose) %>%
+      summarise(purpose_encoded = mean(loan_paid_back_num, na.rm = TRUE))
     
-    loan_risk_tier = factor(case_when(
-      grade_subgrade %in% c(paste0("A", 1:5), paste0("B", 1:5)) ~ "Safe",
-      grade_subgrade %in% paste0("C", 1:5) ~ "Moderate",
-      TRUE ~ "Dangerous"
-    )),
+    # Grade encoding
+    grade_encoding <- train_df %>%
+      group_by(grade_subgrade) %>%
+      summarise(grade_encoded = mean(loan_paid_back_num, na.rm = TRUE))
     
-    interest_rate_risk = case_when(
-      interest_rate < 12.5 ~ "Low_Risk",
-      interest_rate >= 12.5 ~ "High_Risk"
-    ),
+    # Debug: Check if encodings were created
+    print("Employment encoding sample:")
+    print(head(employment_encoding))
     
-    # NEW STRONG FEATURES
-    debt_credit_profile = factor(case_when(
-      debt_to_income_ratio > 0.4 & credit_score < 650 ~ "High_Debt_Poor_Credit",
-      debt_to_income_ratio > 0.4 & credit_score >= 650 ~ "High_Debt_Good_Credit",
-      debt_to_income_ratio <= 0.4 & credit_score < 650 ~ "Low_Debt_Poor_Credit", 
-      TRUE ~ "Low_Debt_Good_Credit"
-    )),
+    # Merge encodings
+    df_engineered <- df_engineered %>%
+      left_join(employment_encoding, by = "employment_status") %>%
+      left_join(purpose_encoding, by = "loan_purpose") %>%
+      left_join(grade_encoding, by = "grade_subgrade")
     
-    payment_to_income_ratio = (loan_amount * interest_rate/100 / 12) / (annual_income / 12),
-    credit_utilization = debt_to_income_ratio / credit_score * 1000,
-    purpose_risk = case_when(
-      loan_purpose %in% c("Education", "Medical", "Vacation") ~ "Low_Risk",
-      loan_purpose %in% c("Debt consolidation", "Car", "Other") ~ "Medium_Risk", 
-      loan_purpose %in% c("Business", "Home") ~ "High_Risk")
-  ) %>%
-  # Remove extreme payment-to-income ratios ONLY FROM TRAINING
-  filter(payment_to_income_ratio < 0.5) %>%
-  na.omit()
+    # Fill NA values with global mean
+    df_engineered$employment_encoded <- ifelse(is.na(df_engineered$employment_encoded), global_mean, df_engineered$employment_encoded)
+    df_engineered$purpose_encoded <- ifelse(is.na(df_engineered$purpose_encoded), global_mean, df_engineered$purpose_encoded)
+    df_engineered$grade_encoded <- ifelse(is.na(df_engineered$grade_encoded), global_mean, df_engineered$grade_encoded)
+  }
+  
+  return(df_engineered)
+}
+
+# Apply enhanced feature engineering
+print("Applying feature engineering to train data...")
+train_enhanced <- enhanced_feature_engineering(train)
+
+print("Applying feature engineering to test data...")
+test_enhanced <- enhanced_feature_engineering(test, train_df = train)
+
+# Debug: Check what columns were created
+print("Columns in train_enhanced:")
+print(names(train_enhanced))
+
+print("Columns in test_enhanced:")
+print(names(test_enhanced))
+
+# Check if encoded columns exist
+print("Checking for encoded columns:")
+print(paste("employment_encoded exists:", "employment_encoded" %in% names(train_enhanced)))
+print(paste("purpose_encoded exists:", "purpose_encoded" %in% names(train_enhanced)))
+print(paste("grade_encoded exists:", "grade_encoded" %in% names(train_enhanced)))
+
+# Prepare features for different models - WITH SAFETY CHECKS
+prepare_xgb_features <- function(df) {
+  # Start with basic numerical features
+  features <- df %>%
+    select(
+      credit_score, annual_income, debt_to_income_ratio, loan_amount, interest_rate,
+      credit_risk_tier, employment_stability, high_risk_combination, loan_risk_tier, interest_rate_risk
+    )
+  
+  # Add encoded features only if they exist
+  if("employment_encoded" %in% names(df)) {
+    features <- features %>% mutate(employment_encoded = df$employment_encoded)
+  }
+  if("purpose_encoded" %in% names(df)) {
+    features <- features %>% mutate(purpose_encoded = df$purpose_encoded)
+  }
+  if("grade_encoded" %in% names(df)) {
+    features <- features %>% mutate(grade_encoded = df$grade_encoded)
+  }
+  
+  return(features)
+}
+
+prepare_catboost_features <- function(df) {
+  # Start with basic numerical features
+  features <- df %>%
+    select(
+      credit_score, annual_income, debt_to_income_ratio, loan_amount, interest_rate,
+      employment_status, loan_purpose, grade_subgrade
+    )
+  
+  # Add encoded features only if they exist
+  if("employment_encoded" %in% names(df)) {
+    features <- features %>% mutate(employment_encoded = df$employment_encoded)
+  }
+  if("purpose_encoded" %in% names(df)) {
+    features <- features %>% mutate(purpose_encoded = df$purpose_encoded)
+  }
+  if("grade_encoded" %in% names(df)) {
+    features <- features %>% mutate(grade_encoded = df$grade_encoded)
+  }
+  
+  # Convert categorical columns to factors
+  categorical_cols <- c("employment_status", "loan_purpose", "grade_subgrade")
+  for(col in categorical_cols) {
+    features[[col]] <- as.factor(features[[col]])
+  }
+  
+  return(features)
+}
+
+# Prepare datasets
+print("Preparing features for models...")
+xgb_train_features <- prepare_xgb_features(train_enhanced)
+xgb_test_features <- prepare_xgb_features(test_enhanced)
+cb_train_features <- prepare_catboost_features(train_enhanced)
+cb_test_features <- prepare_catboost_features(test_enhanced)
+
+# Convert target
+y_train <- as.numeric(as.character(train_enhanced$loan_paid_back))
+
+print("Feature engineering completed successfully!")
+print(paste("XGBoost train features:", ncol(xgb_train_features)))
+print(paste("CatBoost train features:", ncol(cb_train_features)))
+print(paste("Training samples:", nrow(train_enhanced)))
 ```
 
-# Logistic Regression
-
+# XGBoost Model
 ```{r}
-# Set up and run 5-fold cross-validation for Logistic Regression (Baseline only)
-set.seed(123)
-ctrl <- trainControl(
-  method = "cv",
-  number = 5,
-  summaryFunction = twoClassSummary,
-  classProbs = TRUE,
-  verboseIter = TRUE
-)
+print("Training XGBoost with target encoding...")
 
-# 1. Logistic Regression Model with ALL features
-cv_model <- train(
-  loan_paid_back ~ credit_score + annual_income + 
-    debt_to_income_ratio + loan_amount + interest_rate +
-    credit_risk_tier + employment_stability + high_risk_combination +
-    loan_risk_tier + interest_rate_risk +
-    debt_credit_profile + payment_to_income_ratio + credit_utilization + purpose_risk,  # ADDED NEW FEATURES
-  data = train_model,
-  method = "glm", 
-  family = "binomial",
-  trControl = ctrl,
-  metric = "ROC"
-)
+# Prepare XGBoost data
+xgb_features_matrix <- model.matrix(~ . - 1, data = xgb_train_features)
+dtrain_xgb <- xgb.DMatrix(data = xgb_features_matrix, label = y_train)
 
-print(paste("Logistic Regression CV AUC:", round(mean(cv_model$results$ROC), 4)))
-```
-
-# XGBoost
-
-```{r}
-# 2. XGBoost with ALL features including new ones
-train_features <- train_model %>%
-  select(credit_score, annual_income, debt_to_income_ratio, loan_amount, 
-         interest_rate, credit_risk_tier, employment_stability, 
-         high_risk_combination, loan_risk_tier, interest_rate_risk,
-         debt_credit_profile, payment_to_income_ratio, credit_utilization, purpose_risk) %>%  # ADDED NEW FEATURES
-  model.matrix(~ . - 1, data = .)
-
-train_label <- as.numeric(train_model$loan_paid_back == "Paid")
-
-# Create XGBoost specific data structure
-dtrain <- xgb.DMatrix(data = train_features, label = train_label)
-
-# Set parameters with class imbalance handling
-params <- list(
+xgb_params <- list(
   objective = "binary:logistic",
   eval_metric = "auc",
   eta = 0.05,
-  max_depth = 7,
-  min_child_weight = 2,
+  max_depth = 8,
+  min_child_weight = 3,
   subsample = 0.8,
-  colsample_bytree = 0.8,
-  scale_pos_weight = sum(train_label == 0) / sum(train_label == 1)
+  colsample_bytree = 0.8
 )
 
-# Train with early stopping
+# Cross-validation
 xgb_cv <- xgb.cv(
-  params = params,
-  data = dtrain,
+  params = xgb_params,
+  data = dtrain_xgb,
   nrounds = 1000,
   nfold = 5,
   early_stopping_rounds = 50,
   verbose = TRUE,
-  print_every_n = 100
+  print_every_n = 50
 )
 
-# Train final XGBoost model on full training data
-final_xgb <- xgb.train(
-  params = params,
-  data = dtrain,
+# Train final model
+xgb_model <- xgb.train(
+  params = xgb_params,
+  data = dtrain_xgb,
   nrounds = xgb_cv$best_iteration,
   verbose = 1
 )
 
-print(paste("XGBoost CV AUC:", xgb_cv$evaluation_log$test_auc_mean[xgb_cv$best_iteration]))
+print(paste("XGBoost training completed! Best CV AUC:", round(max(xgb_cv$evaluation_log$test_auc_mean), 5)))
 ```
 
-# Catboost
-
+# CatBoost Model
 ```{r}
-# 3. CatBoost - WORKING approach with manual categorical encoding
-# Convert categorical features to numeric codes manually
-train_data_cb <- train_model %>%
-  mutate(
-    credit_risk_tier_num = as.numeric(factor(credit_risk_tier)),
-    employment_stability_num = as.numeric(factor(employment_stability)),
-    high_risk_combination_num = as.numeric(factor(high_risk_combination)),
-    loan_risk_tier_num = as.numeric(factor(loan_risk_tier)),
-    interest_rate_risk_num = as.numeric(factor(interest_rate_risk)),
-    debt_credit_profile_num = as.numeric(factor(debt_credit_profile)),
-    purpose_risk_num = as.numeric(factor(purpose_risk))
-  ) %>%
-  select(credit_score, annual_income, debt_to_income_ratio, loan_amount,
-         interest_rate, payment_to_income_ratio, credit_utilization,
-         credit_risk_tier_num, employment_stability_num, high_risk_combination_num,
-         loan_risk_tier_num, interest_rate_risk_num, debt_credit_profile_num, purpose_risk_num) %>%
-  as.matrix()
+print("Training CatBoost...")
 
-train_label_catboost <- as.numeric(train_model$loan_paid_back == "Paid")
+# Convert to regular data frame
+cb_train_df <- as.data.frame(cb_train_features)
+cb_test_df <- as.data.frame(cb_test_features)
 
-# Create CatBoost pool (no categorical features specified)
-train_pool <- catboost.load_pool(data = train_data_cb, label = train_label_catboost)
+# Identify categorical columns (0-based index)
+cat_features <- which(sapply(cb_train_df, is.factor)) - 1
+print(paste("Categorical features at indices:", paste(cat_features, collapse = ", ")))
 
-# Set CatBoost parameters
+# Create CatBoost pools
+train_pool <- catboost.load_pool(data = cb_train_df, label = y_train, cat_features = cat_features)
+test_pool <- catboost.load_pool(data = cb_test_df, cat_features = cat_features)
+
+# CatBoost parameters
 catboost_params <- list(
-  iterations = 1000,
+  iterations = 500,
   learning_rate = 0.05,
-  depth = 7,
-  loss_function = 'Logloss',
-  eval_metric = 'AUC',
-  verbose = 100,
-  early_stopping_rounds = 50,
-  class_weights = list(1, sum(train_label == 0) / sum(train_label == 1)),
-  random_seed = 123
+  depth = 6,
+  loss_function = "Logloss",
+  eval_metric = "AUC",
+  early_stopping_rounds = 20,
+  verbose = 100
 )
 
-# Train final CatBoost model
-final_catboost <- catboost.train(
-  learn_pool = train_pool,
-  params = catboost_params
+# Train CatBoost
+catboost_model <- catboost.train(train_pool, NULL, params = catboost_params)
+
+print("CatBoost training completed!")
+```
+
+# LightGBM Model
+```{r}
+print("Training LightGBM...")
+
+# Prepare LightGBM data
+lgb_features_matrix <- as.matrix(xgb_train_features)
+lgb_train <- lgb.Dataset(data = lgb_features_matrix, label = y_train)
+
+lgb_params <- list(
+  objective = "binary",
+  metric = "auc",
+  learning_rate = 0.05,
+  num_leaves = 31,
+  max_depth = -1,
+  min_data_in_leaf = 20
 )
 
-# Manual CV
-set.seed(123)
-folds <- createFolds(train_model$loan_paid_back, k = 5)
-catboost_auc_scores <- c()
+# Train LightGBM
+lgb_model <- lgb.train(
+  params = lgb_params,
+  data = lgb_train,
+  nrounds = 500,
+  verbose = 1
+)
 
-for(i in 1:5) {
-  train_idx <- unlist(folds[-i])
-  test_idx <- folds[[i]]
-  
-  train_fold <- train_data_cb[train_idx, ]
-  train_label_fold <- train_label_catboost[train_idx]
-  test_fold <- train_data_cb[test_idx, ]
-  test_label_fold <- train_label_catboost[test_idx]
-  
-  train_pool_fold <- catboost.load_pool(data = train_fold, label = train_label_fold)
-  test_pool_fold <- catboost.load_pool(data = test_fold, label = test_label_fold)
-  
-  catboost_fold <- catboost.train(learn_pool = train_pool_fold, test_pool = test_pool_fold, params = catboost_params)
-  preds <- catboost.predict(catboost_fold, test_pool_fold, prediction_type = "Probability")
-  fold_auc <- pROC::auc(pROC::roc(test_label_fold, preds))
-  catboost_auc_scores <- c(catboost_auc_scores, fold_auc)
-  
-  print(paste("Fold", i, "CatBoost AUC:", round(fold_auc, 4)))
-}
-
-print(paste("CatBoost CV AUC:", round(mean(catboost_auc_scores), 4)))
+print("LightGBM training completed!")
 ```
 
-# Test Features
-
+# Generate Predictions and Create Submissions
 ```{r}
-# Prepare test set with ALL features - NO FILTERING!
-test_clean <- test %>%
-  mutate(
-    credit_risk_tier = factor(case_when(
-      credit_score <= 650 ~ "High_Risk",
-      credit_score > 650 & credit_score < 700 ~ "Medium_Risk", 
-      credit_score >= 700 ~ "Low_Risk"
-    )),
-    employment_stability = factor(case_when(
-      employment_status %in% c("Employed", "Retired", "Self-employed") ~ "Stable",
-      employment_status == "Student" ~ "Moderate", 
-      employment_status == "Unemployed" ~ "Unstable"
-    )),
-    high_risk_combination = as.factor(ifelse(
-      employment_status %in% c("Retired", "Student") & credit_score <= 650, 1, 0
-    )),
-    loan_risk_tier = factor(case_when(
-      grade_subgrade %in% c(paste0("A", 1:5), paste0("B", 1:5)) ~ "Safe",
-      grade_subgrade %in% paste0("C", 1:5) ~ "Moderate",
-      TRUE ~ "Dangerous"
-    )),
-    interest_rate_risk = case_when(
-      interest_rate < 12.5 ~ "Low_Risk",
-      interest_rate >= 12.5 ~ "High_Risk"
-    ),
-    # NEW FEATURES FOR TEST SET
-    debt_credit_profile = factor(case_when(
-      debt_to_income_ratio > 0.4 & credit_score < 650 ~ "High_Debt_Poor_Credit",
-      debt_to_income_ratio > 0.4 & credit_score >= 650 ~ "High_Debt_Good_Credit",
-      debt_to_income_ratio <= 0.4 & credit_score < 650 ~ "Low_Debt_Poor_Credit", 
-      TRUE ~ "Low_Debt_Good_Credit"
-    )),
-    payment_to_income_ratio = (loan_amount * interest_rate/100 / 12) / (annual_income / 12),
-    credit_utilization = debt_to_income_ratio / credit_score * 1000,
-    purpose_risk = case_when(
-      loan_purpose %in% c("Education", "Medical", "Vacation") ~ "Low_Risk",
-      loan_purpose %in% c("Debt consolidation", "Car", "Other") ~ "Medium_Risk", 
-      loan_purpose %in% c("Business", "Home") ~ "High_Risk")
-  )
+print("Generating predictions and creating submission files...")
 
-# Prepare test features for each model with ALL features
-# For XGBoost
-test_features_xgb <- test_clean %>%
-  select(credit_score, annual_income, debt_to_income_ratio, loan_amount, 
-         interest_rate, credit_risk_tier, employment_stability, 
-         high_risk_combination, loan_risk_tier, interest_rate_risk,
-         debt_credit_profile, payment_to_income_ratio, credit_utilization, purpose_risk) %>%  # ADDED NEW FEATURES
-  model.matrix(~ . - 1, data = .)
+# XGBoost predictions
+xgb_test_matrix <- model.matrix(~ . - 1, data = xgb_test_features)
+dtest_xgb <- xgb.DMatrix(data = xgb_test_matrix)
+xgb_preds <- predict(xgb_model, newdata = dtest_xgb)
 
-dtest_xgb <- xgb.DMatrix(data = test_features_xgb)
+# CatBoost predictions
+catboost_preds <- catboost.predict(catboost_model, test_pool, prediction_type = "Probability")
 
-# For CatBoost (only numerical features to avoid errors)
-# Prepare test set for CatBoost with manual categorical encoding
-test_data_cb <- test_clean %>%
-  mutate(
-    credit_risk_tier_num = as.numeric(factor(credit_risk_tier)),
-    employment_stability_num = as.numeric(factor(employment_stability)),
-    high_risk_combination_num = as.numeric(factor(high_risk_combination)),
-    loan_risk_tier_num = as.numeric(factor(loan_risk_tier)),
-    interest_rate_risk_num = as.numeric(factor(interest_rate_risk)),
-    debt_credit_profile_num = as.numeric(factor(debt_credit_profile)),
-    purpose_risk_num = as.numeric(factor(purpose_risk))
-  ) %>%
-  select(credit_score, annual_income, debt_to_income_ratio, loan_amount,
-         interest_rate, payment_to_income_ratio, credit_utilization,
-         credit_risk_tier_num, employment_stability_num, high_risk_combination_num,
-         loan_risk_tier_num, interest_rate_risk_num, debt_credit_profile_num, purpose_risk_num) %>%
-  as.matrix()
+# LightGBM predictions
+lgb_test_matrix <- as.matrix(xgb_test_features)
+lgb_preds <- predict(lgb_model, lgb_test_matrix)
 
-test_pool <- catboost.load_pool(data = test_data_cb)
-```
-
-# Submission files
-
-```{r}
-# Generate predictions from all models
-xgb_predictions <- predict(final_xgb, newdata = dtest_xgb)
-catboost_predictions <- catboost.predict(final_catboost, test_pool, prediction_type = "Probability")
+# Create ensemble predictions
+ensemble_preds <- 0.6 * xgb_preds + 0.3 * catboost_preds + 0.1 * lgb_preds
 
 # Create submission files
-# 1. XGBoost (your best model)
-xgb_submission <- data.frame(
-  id = test$id,
-  loan_paid_back = xgb_predictions
-)
-write.csv(xgb_submission, "xgb_submission.csv", row.names = FALSE)
+submission_files <- list()
 
-# 2. CatBoost 
-catboost_submission <- data.frame(
-  id = test$id,
-  loan_paid_back = catboost_predictions
+submission_files$xgb_enhanced <- data.frame(
+  id = test_enhanced$id,
+  loan_paid_back = xgb_preds
 )
-write.csv(catboost_submission, "catboost_submission.csv", row.names = FALSE)
 
-# 3. XGBoost + CatBoost Ensemble (only if CatBoost performs well)
-if(mean(catboost_auc_scores) > 0.91) {  # Only ensemble if CatBoost is decent
-  ensemble_predictions <- (xgb_predictions * 0.7 + catboost_predictions * 0.3)
-  ensemble_submission <- data.frame(
-    id = test$id,
-    loan_paid_back = ensemble_predictions
-  )
-  write.csv(ensemble_submission, "ensemble_submission.csv", row.names = FALSE)
+submission_files$catboost <- data.frame(
+  id = test_enhanced$id,
+  loan_paid_back = catboost_preds
+)
+
+submission_files$lgb <- data.frame(
+  id = test_enhanced$id,
+  loan_paid_back = lgb_preds
+)
+
+submission_files$ensemble_weighted <- data.frame(
+  id = test_enhanced$id,
+  loan_paid_back = ensemble_preds
+)
+
+# Equal weight ensemble
+submission_files$ensemble_equal <- data.frame(
+  id = test_enhanced$id,
+  loan_paid_back = (xgb_preds + catboost_preds + lgb_preds) / 3
+)
+
+# Write all submission files
+for (name in names(submission_files)) {
+  filename <- paste0("submission_", name, ".csv")
+  write.csv(submission_files[[name]], filename, row.names = FALSE)
+  print(paste("Created:", filename))
 }
 
-print(paste("Submission rows check - XGBoost:", nrow(xgb_submission)))
-print(paste("Submission rows check - CatBoost:", nrow(catboost_submission)))
-
-# Model Performance Summary
-print("=== MODEL PERFORMANCE SUMMARY ===")
-print(paste("Logistic Regression CV AUC:", round(mean(cv_model$results$ROC), 4)))
-print(paste("XGBoost CV AUC:", round(xgb_cv$evaluation_log$test_auc_mean[xgb_cv$best_iteration], 4)))
-print(paste("CatBoost CV AUC:", round(mean(catboost_auc_scores), 4)))
-
-# Feature importance for insight
-importance_matrix <- xgb.importance(model = final_xgb)
-print("XGBoost Feature Importance:")
-print(importance_matrix[1:15, ])
-
-print("All submission files created: xgb_submission.csv, catboost_submission.csv, ensemble_submission.csv")
+print("=== SUBMISSION FILES CREATED ===")
+print("Files created:")
+print(paste("- submission_xgb_enhanced.csv (XGBoost only)"))
+print(paste("- submission_catboost.csv (CatBoost only)"))
+print(paste("- submission_lgb.csv (LightGBM only)"))
+print(paste("- submission_ensemble_weighted.csv (Recommended: 60% XGB, 30% CatBoost, 10% LGB)"))
+print(paste("- submission_ensemble_equal.csv (Equal weights)"))
+print("=== COMPLETED SUCCESSFULLY ===")
 ```
 

@@ -1,0 +1,111 @@
+---
+title: "Season 5 Episode 12 | Predicting Diabetes"
+author: "Göktürk Çolak"
+date: "2025-12-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("~/Github/kaggle-playground-series/Season 5 Episode 12/data")
+```
+
+# Data Upload
+
+```{r}
+library(tidyverse)
+library(scales)
+
+train <- read_csv("train.csv")
+test <- read_csv("test.csv")
+sample_submission <- read_csv("sample_submission.csv")
+
+setwd("../")
+```
+
+# Preprocessing
+
+```{r}
+# Missing values
+train %>%
+  is.na() %>%
+  colSums() %>%
+  sort(decreasing = TRUE)
+```
+
+```{r}
+# Target variable
+train <- train %>% 
+  mutate(diagnosed_diabetes = factor(diagnosed_diabetes))
+
+
+factorise_func <- function(df) {
+  df %>% 
+    mutate(
+      # 1. Ordinal
+      education_level = factor(education_level, 
+                               levels = c("No formal", "Highschool", "Graduate", "Postgraduate"), 
+                               ordered = TRUE),
+      income_level = factor(income_level, 
+                            levels = c("Low", "Lower-Middle", "Medium", "Upper-Middle", "High"), 
+                            ordered = TRUE),
+      
+      # 2. Nominal
+      across(c(gender, ethnicity,
+               smoking_status, employment_status, 
+               family_history_diabetes, hypertension_history, 
+               cardiovascular_history), as.factor)
+    )
+}
+
+# Apply the function for both train and test dfs
+train <- factorise_func(train)
+test <- factorise_func(test)
+
+glimpse(train)
+```
+
+
+```{r}
+head(train, 20) %>% View()
+```
+
+# Target Distribution
+
+```{r}
+train %>% 
+  ggplot(aes(diagnosed_diabetes)) +
+  geom_bar(fill = "#8387C3") +
+  scale_y_continuous(labels = comma)
+```
+
+
+```{r}
+# Age Distribution
+train %>%
+  ggplot(aes(age)) +
+  geom_histogram(aes(y = after_stat(density)), color = "white", fill = "#8387C3") +
+  geom_density(color = "#0A1123", linewidth = 1, adjust = 2)
+
+# Age - Diabetes
+train %>%
+  ggplot(aes(x = age, fill = factor(diagnosed_diabetes))) +
+  geom_density(alpha = 0.5) +
+  labs(fill = "Diabetes")
+
+
+# Alcohol Consumption
+train %>% 
+  ggplot(aes(x = factor(alcohol_consumption_per_week), fill = diagnosed_diabetes)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  labs(y = "Proportion", x = "Alcohol Consumption Level")
+
+# 
+
+
+
+
+
+```
+
