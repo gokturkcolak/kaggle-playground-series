@@ -7,7 +7,6 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-setwd("~/Github/kaggle-playground-series/Season 5 Episode 12/data")
 ```
 
 # Data Upload
@@ -15,6 +14,10 @@ setwd("~/Github/kaggle-playground-series/Season 5 Episode 12/data")
 ```{r}
 library(tidyverse)
 library(scales)
+
+set_theme(theme_light())
+
+setwd("~/Github/kaggle-playground-series/Season 5 Episode 12/data")
 
 train <- read_csv("train.csv")
 test <- read_csv("test.csv")
@@ -25,12 +28,23 @@ setwd("../")
 
 # Preprocessing
 
+
 ```{r}
 # Missing values
+sum(is.na(train))
+
+# Columns with NAs in train
 train %>%
   is.na() %>%
   colSums() %>%
   sort(decreasing = TRUE)
+
+# Columns with NAs in test
+test %>%
+  is.na() %>%
+  colSums() %>%
+  sort(decreasing = TRUE)
+
 ```
 
 ```{r}
@@ -39,7 +53,8 @@ train <- train %>%
   mutate(diagnosed_diabetes = factor(diagnosed_diabetes))
 
 
-factorise_func <- function(df) {
+
+factorise <- function(df) {
   df %>% 
     mutate(
       # 1. Ordinal
@@ -59,8 +74,8 @@ factorise_func <- function(df) {
 }
 
 # Apply the function for both train and test dfs
-train <- factorise_func(train)
-test <- factorise_func(test)
+train <- factorise(train)
+test <- factorise(test)
 
 glimpse(train)
 ```
@@ -74,8 +89,8 @@ head(train, 20) %>% View()
 
 ```{r}
 train %>% 
-  ggplot(aes(diagnosed_diabetes)) +
-  geom_bar(fill = "#8387C3") +
+  ggplot(aes(diagnosed_diabetes, fill = diagnosed_diabetes)) +
+  geom_bar() +
   scale_y_continuous(labels = comma)
 ```
 
@@ -101,9 +116,367 @@ train %>%
   scale_y_continuous(labels = scales::percent) +
   labs(y = "Proportion", x = "Alcohol Consumption Level")
 
-# 
-
 
 
 ```
 
+```{r}
+sedentary <- train %>%
+  mutate(
+    sedentary_ratio = screen_time_hours_per_day / (physical_activity_minutes_per_week + 1),
+    lifestyle_score = ntile(diet_score, 10) +
+                      ntile(physical_activity_minutes_per_week, 10) -
+                      ntile(alcohol_consumption_per_week, 10) -
+                      as.numeric(smoking_status)
+  )
+
+
+sedentary %>%
+  ggplot(aes(x = log(sedentary_ratio + 1), fill = diagnosed_diabetes)) +
+  geom_density(alpha = .5, color = NA) +
+  labs(
+    title = "Sedentary Ratio Density by Diabetes Status",
+    x = "Log(Sedentary Ratio)",
+    y = "Density"
+  )
+
+# This seems ok
+sedentary %>%
+  mutate(score_bin = ntile(lifestyle_score, 10)) %>%
+  count(score_bin, diagnosed_diabetes) %>%
+  group_by(score_bin) %>%
+  mutate(pct = n / sum(n)) %>%
+  ggplot(aes(x = factor(score_bin), y = pct, fill = diagnosed_diabetes)) +
+  geom_col(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    title = "Diabetes Prevalence by Lifestyle Score Decile",
+    subtitle = "Higher Decile (10) = Healthier Lifestyle Score",
+    x = "Lifestyle Score Decile",
+    y = "Proportion"
+  )
+
+
+
+
+
+
+sedentary %>%
+  mutate(ratio_bin = ntile(sedentary_ratio, 10)) %>% # Split into 10 groups
+  count(ratio_bin, diagnosed_diabetes) %>%
+  group_by(ratio_bin) %>%
+  mutate(pct = n / sum(n)) %>%
+  ggplot(aes(x = factor(ratio_bin), y = pct, fill = diagnosed_diabetes)) +
+  geom_col(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    title = "Sedentary Ratio Deciles",
+    subtitle = "Does risk only increase in the highest decile (10)?",
+    x = "Sedentary Ratio Decile (10 = Most Sedentary)",
+    y = "Proportion"
+  ) +
+  theme_minimal()
+
+
+sedentary <- train %>%
+  mutate(
+    # Convert Yes/No factors to 1/0 numbers safely
+    # Adjust "Yes" string matches based on your specific factor levels if needed
+    h_risk = as.numeric(hypertension_history == "Yes" | hypertension_history == "1"),
+    c_risk = as.numeric(cardiovascular_history == "Yes" | cardiovascular_history == "1"),
+    f_risk = as.numeric(family_history_diabetes == "Yes" | family_history_diabetes == "1"),
+    
+    # Simple additive risk score
+    total_medical_risk = h_risk + c_risk + f_risk,
+    
+    # Interaction: Does BMI matter more for high-risk groups?
+    genetic_bmi_risk = bmi * (f_risk + 1) 
+  )
+
+sedentary %>%
+  ggplot(aes(x = family_history_diabetes, y = bmi, fill = diagnosed_diabetes)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) + # Hiding outliers to keep it clean
+  scale_fill_manual(values = c("#1f77b4", "#d62728")) +
+  labs(
+    title = "Does Family History Lower the BMI Threshold?",
+    subtitle = "Check if the Red box (Diabetes) is lower in the 'Yes' group vs 'No' group",
+    x = "Family History of Diabetes",
+    y = "BMI"
+  ) +
+  theme_minimal() +
+  coord_cartesian(ylim = c(15, 45)) # Zoom in on the core BMI range
+
+
+sedentary %>%
+  ggplot(aes(x = bmi, fill = diagnosed_diabetes)) +
+  geom_density(alpha = 0.5, color = NA) +
+  facet_wrap(~family_history_diabetes, labeller = label_both) +
+  scale_fill_manual(values = c("#1f77b4", "#d62728")) +
+  labs(
+    title = "BMI Distribution Split by Family History",
+    subtitle = "Comparing if the 'Diabetes' peak shifts left for those with Family History",
+    x = "BMI",
+    y = "Density"
+  ) +
+  theme_minimal()
+
+
+
+
+sedentary <- train %>%
+  mutate(
+    high_bmi = if_else(bmi > 30, 1, 0),
+    high_bp = if_else(systolic_bp > 130 | diastolic_bp > 85, 1, 0),
+    high_trig = if_else(triglycerides > 150, 1, 0),
+    low_hdl = if_else((gender == "Male" & hdl_cholesterol < 40) | 
+                      (gender == "Female" & hdl_cholesterol < 50), 1, 0),
+    central_obesity = if_else((gender == "Male" & waist_to_hip_ratio > 0.90) | 
+                              (gender == "Female" & waist_to_hip_ratio > 0.85), 1, 0),
+    metabolic_score = high_bmi + high_bp + high_trig + low_hdl + central_obesity
+  )
+
+
+sedentary %>%
+  count(metabolic_score, diagnosed_diabetes) %>%
+  group_by(metabolic_score) %>%
+  mutate(pct = n / sum(n)) %>%
+  ggplot(aes(x = factor(metabolic_score), y = pct, fill = diagnosed_diabetes)) +
+  geom_col(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("#1f77b4", "#d62728")) +
+  labs(
+    title = "Diabetes Prevalence by Metabolic Syndrome Score",
+    subtitle = "Number of Clinical Thresholds Crossed (0 to 5)",
+    x = "Metabolic Score",
+    y = "Proportion"
+  )
+
+cluster_data <- train %>%
+  select(age, bmi, systolic_bp, diastolic_bp, triglycerides, 
+         hdl_cholesterol, waist_to_hip_ratio) %>%
+  scale()
+
+# 2. Run K-Means (Let's try 5 distinct groups)
+set.seed(42) # For reproducibility
+kmeans_result <- kmeans(cluster_data, centers = 5, nstart = 25)
+
+# 3. Add the Cluster ID back to the main dataframe
+train$cluster_id <- as.factor(kmeans_result$cluster)
+
+
+train %>%
+  group_by(cluster_id) %>%
+  summarise(
+    diabetes_risk = mean(as.numeric(diagnosed_diabetes) - 1),
+    count = n()
+  ) %>%
+  ggplot(aes(x = cluster_id, y = diabetes_risk, fill = cluster_id)) +
+  geom_col() +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_viridis_d() +
+  labs(
+    title = "Diabetes Risk by K-Means Cluster",
+    subtitle = "Does one specific 'Patient Persona' have much higher risk?",
+    x = "Cluster ID",
+    y = "Proportion with Diabetes"
+  ) +
+  theme_minimal()
+```
+
+
+
+1. Metabolic & Cardiovascular Indicators (failed)
+trig_hdl_ratio = triglycerides / hdl_cholesterol
+bad_cholesterol = cholesterol_total - hdl_cholesterol
+pulse_pressure = systolic_bp - diastolic_bp
+mean_arterial_pressure = (systolic_bp + (2 * diastolic_bp)) / 3
+
+2. Anthropometric Interactions (failed)
+visceral_fat = bmi * waist_to_hip_ratio
+absi = waist_to_hip_ratio / (bmi^2/3)
+age_bmi = bmi * age
+
+3. Sedentary Scores
+sedentary_ratio = screen_time_hours_per_day / (physical_activity_minutes_per_week + 1)
+
+
+# 2. Feature Engineering
+
+```{r}
+library(class) # specialized package often used, but we can do it with base/stats
+
+# 1. Helper to calculate "Metabolic Score" (The logic we proved earlier)
+add_metabolic_score <- function(df) {
+  df %>%
+    mutate(
+      high_bmi = if_else(bmi > 30, 1, 0),
+      high_bp = if_else(systolic_bp > 130 | diastolic_bp > 85, 1, 0),
+      high_trig = if_else(triglycerides > 150, 1, 0),
+      low_hdl = if_else((gender == "Male" & hdl_cholesterol < 40) | 
+                        (gender == "Female" & hdl_cholesterol < 50), 1, 0),
+      central_obesity = if_else((gender == "Male" & waist_to_hip_ratio > 0.90) | 
+                                (gender == "Female" & waist_to_hip_ratio > 0.85), 1, 0),
+      metabolic_score = high_bmi + high_bp + high_trig + low_hdl + central_obesity
+    ) %>%
+    select(-high_bmi, -high_bp, -high_trig, -low_hdl, -central_obesity)
+}
+
+# 2. The Main Function
+feature_engineering <- function(df, kmeans_model = NULL) {
+  
+  # A. Standard Features (Row-by-row operations)
+  df_eng <- df %>%
+    mutate(
+      sedentary_ratio_raw = screen_time_hours_per_day / (physical_activity_minutes_per_week + 1),
+      ratio_bin = ntile(sedentary_ratio_raw, 10),
+      
+      lifestyle_score = ntile(diet_score, 10) +
+                        ntile(physical_activity_minutes_per_week, 10) -
+                        ntile(alcohol_consumption_per_week, 10) -
+                        as.numeric(smoking_status)
+    ) %>%
+    add_metabolic_score() %>% # Use the helper above
+    select(-sedentary_ratio_raw)
+
+  # B. K-Means Logic (Context aware)
+  # We select the columns used for clustering
+  cluster_cols <- df_eng %>% 
+    select(age, bmi, systolic_bp, diastolic_bp, triglycerides, hdl_cholesterol, waist_to_hip_ratio) %>%
+    scale() # Important: Always scale before K-Means
+  
+  if (is.null(kmeans_model)) {
+    # CASE 1: Training Data (Fit the model)
+    set.seed(42)
+    km_model <- kmeans(cluster_cols, centers = 5, nstart = 25)
+    df_eng$cluster_id <- as.factor(km_model$cluster)
+    
+    # Return a LIST containing both the data and the model (so you can save it)
+    return(list(data = df_eng, model = km_model))
+    
+  } else {
+    # CASE 2: Test Data (Use existing centers)
+    # This finds the nearest center for each row
+    
+    # Custom function to find nearest center
+    nearest_cluster <- function(row, centers) {
+      which.min(apply(centers, 1, function(c) sum((row - c)^2)))
+    }
+    
+    # Apply to all rows
+    df_eng$cluster_id <- as.factor(apply(cluster_cols, 1, nearest_cluster, centers = kmeans_model$centers))
+    
+    return(df_eng) # Just return data
+  }
+}
+```
+
+```{r}
+library(tidyverse)
+library(class)
+
+# 1. Process Training Data
+# This generates the features AND fits the K-Means model
+train_result <- feature_engineering(train)
+train_processed <- train_result$data
+kmeans_model <- train_result$model 
+
+# 2. Process Test Data
+# We pass the 'kmeans_model' so the test set uses the same clusters as train
+test_processed <- feature_engineering(test, kmeans_model = kmeans_model)
+
+# Check the new columns
+glimpse(train_processed)
+```
+
+
+
+# Model
+
+```{r}
+library(lightgbm)
+library(pROC)
+library(caret) # for createDataPartition
+
+# 1. Split data into Local Train (80%) and Validation (20%)
+set.seed(42)
+split_index <- createDataPartition(train_processed$diagnosed_diabetes, p = 0.8, list = FALSE)
+local_train <- train_processed[split_index, ]
+local_val   <- train_processed[-split_index, ]
+
+# 2. Prepare LightGBM Datasets
+# Convert factors to numeric (required by LightGBM)
+dtrain_local <- lgb.Dataset(
+  data = local_train %>% select(-diagnosed_diabetes) %>% mutate(across(where(is.factor), as.numeric)) %>% as.matrix(),
+  label = as.numeric(local_train$diagnosed_diabetes) - 1
+)
+
+dval_local <- local_val %>% select(-diagnosed_diabetes) %>% mutate(across(where(is.factor), as.numeric)) %>% as.matrix()
+val_labels <- as.numeric(local_val$diagnosed_diabetes) - 1
+
+# 3. Train with Validation
+params <- list(
+  objective = "binary",
+  metric = "auc",
+  learning_rate = 0.05,
+  num_leaves = 31,
+  feature_fraction = 0.8 # Randomly select 80% of features per iteration (prevents overfitting)
+)
+
+# We use lgb.train with 'valids' to see the score improve live
+model_cv <- lgb.train(
+  params = params,
+  data = dtrain_local,
+  nrounds = 500,
+  valids = list(validation = lgb.Dataset(dval_local, label = val_labels)),
+  early_stopping_rounds = 50,
+  verbose = 1
+)
+
+# 4. Calculate Final AUC
+preds_val <- predict(model_cv, dval_local)
+auc_score <- auc(val_labels, preds_val)
+print(paste("Local AUC Score:", round(auc_score, 4)))
+```
+
+# Full Training & Submission
+
+```{r}
+# 1. Prepare Full Training Data
+full_train_matrix <- train_processed %>%
+  select(-diagnosed_diabetes) %>%
+  mutate(across(where(is.factor), as.numeric)) %>%
+  as.matrix()
+
+full_labels <- as.numeric(train_processed$diagnosed_diabetes) - 1
+
+dtrain_full <- lgb.Dataset(
+  data = full_train_matrix,
+  label = full_labels
+)
+
+# 2. Train Final Model
+# (Using the best_iter from the validation run is a good practice)
+model_final <- lgb.train(
+  params = params,
+  data = dtrain_full,
+  nrounds = model_cv$best_iter # Use the optimal number of rounds found above
+)
+
+# 3. Predict on Test Set
+test_matrix <- test_processed %>%
+  mutate(across(where(is.factor), as.numeric)) %>%
+  as.matrix()
+
+submission_preds <- predict(model_final, test_matrix)
+
+# 4. Create Submission File
+# Assuming the test set has an 'id' column. If 'id' was removed during processing,
+# you might need to grab it from the original 'test' dataframe.
+submission <- data.frame(
+  id = test$id, 
+  diagnosed_diabetes = submission_preds
+)
+
+# Save to CSV
+write.csv(submission, "submission.csv", row.names = FALSE)
+```
