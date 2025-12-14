@@ -9,7 +9,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Data Upload
+# 1. Data Upload
 
 ```{r}
 library(tidyverse)
@@ -26,7 +26,7 @@ sample_submission <- read_csv("sample_submission.csv")
 setwd("../")
 ```
 
-# Preprocessing
+# 2. Preprocessing
 
 
 ```{r}
@@ -85,7 +85,10 @@ glimpse(train)
 head(train, 20) %>% View()
 ```
 
-# Target Distribution
+# 3. Exploratory Data Analysis
+
+
+## 3.1 Target Distribution
 
 ```{r}
 train %>% 
@@ -95,17 +98,18 @@ train %>%
 ```
 
 
+
 ```{r}
 # Age Distribution
 train %>%
   ggplot(aes(age)) +
   geom_histogram(aes(y = after_stat(density)), color = "white", fill = "#8387C3") +
-  geom_density(color = "#0A1123", linewidth = 1, adjust = 2)
+  geom_density(color = "#0A1123", linewidth = .8, adjust = 2)
 
 # Impact of Age on Diabetes
 train %>%
   ggplot(aes(x = age, fill = diagnosed_diabetes)) +
-  geom_density(alpha = 0.5) +
+  geom_density(alpha = .3) +
   labs(fill = "Diabetes")
 
 
@@ -121,7 +125,7 @@ train %>%
 ```
 
 ```{r}
-sedentary <- train %>%
+temp_df <- train %>%
   mutate(
     sedentary_ratio = screen_time_hours_per_day / (physical_activity_minutes_per_week + 1),
     lifestyle_score = ntile(diet_score, 10) +
@@ -131,7 +135,7 @@ sedentary <- train %>%
   )
 
 
-sedentary %>%
+temp_df %>%
   ggplot(aes(x = log(sedentary_ratio + 1), fill = diagnosed_diabetes)) +
   geom_density(alpha = .5, color = NA) +
   labs(
@@ -141,7 +145,7 @@ sedentary %>%
   )
 
 # This seems ok
-sedentary %>%
+temp_df %>%
   mutate(score_bin = ntile(lifestyle_score, 10)) %>%
   count(score_bin, diagnosed_diabetes) %>%
   group_by(score_bin) %>%
@@ -161,7 +165,7 @@ sedentary %>%
 
 
 
-sedentary %>%
+temp_df %>%
   mutate(ratio_bin = ntile(sedentary_ratio, 10)) %>% # Split into 10 groups
   count(ratio_bin, diagnosed_diabetes) %>%
   group_by(ratio_bin) %>%
@@ -178,7 +182,7 @@ sedentary %>%
   theme_minimal()
 
 
-sedentary <- train %>%
+temp_df <- train %>%
   mutate(
     # Convert Yes/No factors to 1/0 numbers safely
     # Adjust "Yes" string matches based on your specific factor levels if needed
@@ -193,7 +197,7 @@ sedentary <- train %>%
     genetic_bmi_risk = bmi * (f_risk + 1) 
   )
 
-sedentary %>%
+temp_df %>%
   ggplot(aes(x = family_history_diabetes, y = bmi, fill = diagnosed_diabetes)) +
   geom_boxplot(outlier.shape = NA, alpha = 0.7) + # Hiding outliers to keep it clean
   scale_fill_manual(values = c("#1f77b4", "#d62728")) +
@@ -207,7 +211,7 @@ sedentary %>%
   coord_cartesian(ylim = c(15, 45)) # Zoom in on the core BMI range
 
 
-sedentary %>%
+temp_df %>%
   ggplot(aes(x = bmi, fill = diagnosed_diabetes)) +
   geom_density(alpha = 0.5, color = NA) +
   facet_wrap(~family_history_diabetes, labeller = label_both) +
@@ -223,7 +227,7 @@ sedentary %>%
 
 
 
-sedentary <- train %>%
+temp_df <- train %>%
   mutate(
     high_bmi = if_else(bmi > 30, 1, 0),
     high_bp = if_else(systolic_bp > 130 | diastolic_bp > 85, 1, 0),
@@ -236,7 +240,7 @@ sedentary <- train %>%
   )
 
 
-sedentary %>%
+temp_df %>%
   count(metabolic_score, diagnosed_diabetes) %>%
   group_by(metabolic_score) %>%
   mutate(pct = n / sum(n)) %>%
@@ -300,7 +304,7 @@ age_bmi = bmi * age
 sedentary_ratio = screen_time_hours_per_day / (physical_activity_minutes_per_week + 1)
 
 
-# 2. Feature Engineering
+# 4. Feature Engineering
 
 ```{r}
 library(class) # specialized package often used, but we can do it with base/stats
@@ -390,7 +394,7 @@ glimpse(train_processed)
 
 
 
-# Model
+# 5. LightGBM
 
 ```{r}
 library(lightgbm)
@@ -438,7 +442,7 @@ auc_score <- auc(val_labels, preds_val)
 print(paste("Local AUC Score:", round(auc_score, 4)))
 ```
 
-# Full Training & Submission
+## 5.1 Full Training & Submission
 
 ```{r}
 # 1. Prepare Full Training Data
