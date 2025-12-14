@@ -97,6 +97,7 @@ train %>%
   scale_y_continuous(labels = comma)
 ```
 
+## 3.2. Primary Estimators
 
 
 ```{r}
@@ -477,7 +478,7 @@ submission_preds <- predict(model_final, test_matrix)
 # Assuming the test set has an 'id' column. If 'id' was removed during processing,
 # you might need to grab it from the original 'test' dataframe.
 submission <- data.frame(
-  id = test$id, 
+  id = test$id,
   diagnosed_diabetes = submission_preds
 )
 
